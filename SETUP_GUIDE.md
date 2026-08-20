@@ -676,4 +676,7 @@ validate replacement
 retry usage once
 ```
 
+Concurrent HTTP 401 responses for the same active token trigger only one reauthorization;
+the remaining requests reuse the validated replacement token.
+
 No bearer token is written to `conf.json`, `proxy.env`, a database, or another runtime file.

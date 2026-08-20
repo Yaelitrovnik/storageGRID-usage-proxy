@@ -492,7 +492,9 @@ class TokenManager(object):
         A normally healthy token is allowed to refresh immediately even though its
         regular 10-hour refresh is not due. If that recovery attempt fails, later
         sniffer requests respect REFRESH_RETRY_SECONDS instead of hammering the
-        authorize endpoint.
+        authorize endpoint. Concurrent 401s for the same rejected token cause at
+        most one reauthorization: followers observe the replacement token while
+        holding _refresh_lock and reuse it.
         """
         with self._refresh_lock:
             now_mono = time.monotonic()

@@ -288,6 +288,48 @@ class UsageRecoveryTests(unittest.TestCase):
             self.assertEqual(json.loads(response.body), {"after_reauth": True})
             self.assertEqual(client.fetch_usage.call_args_list[-1], mock.call("NEW_TOKEN"))
 
+    def test_concurrent_401_recovery_reauthorizes_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = base_config(pathlib.Path(td))
+            client = mock.Mock()
+            manager = mod.TokenManager(cfg, client)
+            client.authorize.return_value = "OLD_TOKEN"
+            client.fetch_usage.return_value = usage_response()
+            manager.refresh(force=True)
+
+            client.reset_mock()
+            client.authorize.return_value = "NEW_TOKEN"
+            old_token_requests = threading.Barrier(2)
+
+            def fetch_usage(token):
+                if token == "OLD_TOKEN":
+                    old_token_requests.wait(timeout=2)
+                    raise mod.UpstreamHTTPError(401, "https://sg/api/v4/org/usage")
+                return usage_response({"recovered_with": token})
+
+            client.fetch_usage.side_effect = fetch_usage
+            results = []
+            errors = []
+
+            def request_usage():
+                try:
+                    results.append(mod.get_usage_with_recovery(client, manager))
+                except Exception as exc:
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=request_usage) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=3)
+
+            self.assertFalse(errors)
+            self.assertFalse(any(thread.is_alive() for thread in threads))
+            self.assertEqual(client.authorize.call_count, 1)
+            self.assertEqual(len(results), 2)
+            for result in results:
+                self.assertEqual(json.loads(result.body), {"recovered_with": "NEW_TOKEN"})
+
     def test_failed_401_reauthorization_enters_backoff(self):
         with tempfile.TemporaryDirectory() as td:
             cfg = base_config(pathlib.Path(td))
