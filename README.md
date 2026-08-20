@@ -121,6 +121,13 @@ the packaged `0.0.0.0` default). Configure HTTP-SNIFFER to send that value in th
 listener is the deliberately conspicuous `ALLOW_UNAUTHENTICATED_NONLOOPBACK=true` override;
 the proxy logs this as a dangerous configuration.
 
+`/readyz` returns 503 if the token is missing or refresh failures persist for
+`STALE_TOKEN_WARNING_SECONDS` (default: 900 seconds, or three retry intervals when that is
+longer). Its JSON response reports the non-sensitive failure age and count. `/metrics` exposes
+JSON health counters: token presence, seconds since the last successful refresh, consecutive
+refresh failures, and a boolean indicating a refresh error. Neither endpoint exposes a token,
+password, or error details.
+
 Only these four values are environment-specific:
 
 ```ini

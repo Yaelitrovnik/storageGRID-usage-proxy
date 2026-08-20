@@ -229,6 +229,24 @@ class TokenManagerTests(unittest.TestCase):
             self.assertTrue(snapshot["last_refresh_error"])
             self.assertNotIn("sensitive internal detail", json.dumps(snapshot))
 
+    def test_snapshot_reports_refresh_failure_age_and_count_without_error_detail(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = base_config(pathlib.Path(td))
+            client = mock.Mock()
+            client.authorize.side_effect = ["TOKEN", mod.ProxyError("sensitive outage detail")]
+            client.fetch_usage.return_value = usage_response()
+            manager = mod.TokenManager(cfg, client)
+            manager.refresh(force=True)
+
+            with self.assertRaises(mod.ProxyError):
+                manager.refresh(force=True)
+
+            snapshot = manager.snapshot()
+            self.assertEqual(snapshot["consecutive_refresh_failures"], 1)
+            self.assertGreaterEqual(snapshot["refresh_error_age_seconds"], 0)
+            self.assertGreaterEqual(snapshot["seconds_since_last_success"], 0)
+            self.assertNotIn("sensitive outage detail", json.dumps(snapshot))
+
 
 class UsageRecoveryTests(unittest.TestCase):
     def test_live_usage_uses_current_token(self):
@@ -455,6 +473,44 @@ class HTTPServerTests(unittest.TestCase):
                 self.assertNotIn("SECRET_TOKEN", ready)
                 self.assertEqual(json.loads(health)["status"], "ok")
                 self.assertEqual(json.loads(ready)["status"], "ready")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_readyz_reports_stale_refresh_and_metrics_do_not_leak_error_detail(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = base_config(pathlib.Path(td))
+            cfg.stale_token_warning_seconds = 60
+            client = mock.Mock()
+            client.authorize.side_effect = ["TOKEN", mod.ProxyError("sensitive outage detail")]
+            client.fetch_usage.return_value = usage_response()
+            manager = mod.TokenManager(cfg, client)
+            manager.refresh(force=True)
+            with self.assertRaises(mod.ProxyError):
+                manager.refresh(force=True)
+            with manager._state_lock:
+                manager._last_error_started_epoch = __import__("time").time() - 61
+
+            app = mod.ProxyApplication(cfg, client, manager, None)
+            server, thread = self._start_server(app)
+            try:
+                base = "http://127.0.0.1:{0}".format(server.server_port)
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(base + "/readyz", timeout=2)
+                self.assertEqual(ctx.exception.code, 503)
+                ready = json.loads(ctx.exception.read().decode("utf-8"))
+                self.assertEqual(ready["status"], "not_ready")
+                self.assertGreaterEqual(ready["refresh_error_age_seconds"], 60)
+
+                with urllib.request.urlopen(base + "/metrics", timeout=2) as response:
+                    metrics_text = response.read().decode("utf-8")
+                metrics = json.loads(metrics_text)
+                self.assertTrue(metrics["token_loaded"])
+                self.assertEqual(metrics["consecutive_refresh_failures"], 1)
+                self.assertTrue(metrics["last_refresh_error"])
+                self.assertIn("seconds_since_last_success", metrics)
+                self.assertNotIn("sensitive outage detail", metrics_text)
             finally:
                 server.shutdown()
                 server.server_close()

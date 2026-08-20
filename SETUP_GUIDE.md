@@ -72,6 +72,7 @@ AUTH_PATH=/api/v4/authorize
 USAGE_PATH=/api/v4/org/usage
 TOKEN_REFRESH_HOURS=10
 REFRESH_RETRY_SECONDS=300
+STALE_TOKEN_WARNING_SECONDS=900
 HTTP_TIMEOUT_SECONDS=30
 MAX_RESPONSE_BYTES=10485760
 TLS_VERIFY=true
@@ -88,6 +89,13 @@ Set the same value in HTTP-SNIFFER's `X-StorageGRID-Proxy-Key` header. A non-loo
 listener without a key fails at startup unless the operator deliberately sets
 `ALLOW_UNAUTHENTICATED_NONLOOPBACK=true`; that override is logged as dangerous and should
 only be used for an explicitly accepted insecure deployment.
+
+`/readyz` returns 503 when no token is loaded or refresh failures have persisted for
+`STALE_TOKEN_WARNING_SECONDS`. The default is 900 seconds (or three retry intervals if longer).
+The endpoint's JSON status includes only non-sensitive refresh failure age/count fields. The
+unauthenticated `GET /metrics` JSON endpoint exposes token presence, seconds since last success,
+consecutive failure count, and a boolean error state; it never includes token, password, or error
+text.
 
 The authorize body contains `cookie: true` and `csrfToken: false` directly in application code. There is no bootstrap bearer or bootstrap CSRF configuration.
 

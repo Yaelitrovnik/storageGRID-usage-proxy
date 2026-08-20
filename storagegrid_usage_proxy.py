@@ -71,6 +71,7 @@ class Config(object):
         proxy_api_key,
         allow_unauthenticated_nonloopback,
         log_level,
+        stale_token_warning_seconds=None,
     ):
         self.base_url = base_url
         self.username = username
@@ -89,6 +90,11 @@ class Config(object):
         self.proxy_api_key = proxy_api_key
         self.allow_unauthenticated_nonloopback = allow_unauthenticated_nonloopback
         self.log_level = log_level
+        self.stale_token_warning_seconds = (
+            stale_token_warning_seconds
+            if stale_token_warning_seconds is not None
+            else max(3.0 * refresh_retry_seconds, 900.0)
+        )
 
     @classmethod
     def from_env(cls):
@@ -106,6 +112,12 @@ class Config(object):
         retry_seconds = env_float("REFRESH_RETRY_SECONDS", 300.0)
         if retry_seconds <= 0:
             raise ProxyError("REFRESH_RETRY_SECONDS must be greater than 0")
+
+        stale_token_warning_seconds = env_float(
+            "STALE_TOKEN_WARNING_SECONDS", max(3.0 * retry_seconds, 900.0)
+        )
+        if stale_token_warning_seconds <= 0:
+            raise ProxyError("STALE_TOKEN_WARNING_SECONDS must be greater than 0")
 
         timeout = env_float("HTTP_TIMEOUT_SECONDS", 30.0)
         if timeout <= 0:
@@ -142,6 +154,7 @@ class Config(object):
                 "ALLOW_UNAUTHENTICATED_NONLOOPBACK", False
             ),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
+            stale_token_warning_seconds=stale_token_warning_seconds,
         )
 
 
@@ -403,6 +416,8 @@ class TokenManager(object):
         self._last_success_epoch = None
         self._next_refresh_monotonic = 0.0
         self._last_error = None
+        self._last_error_started_epoch = None
+        self._consecutive_refresh_failures = 0
         self._next_attempt_monotonic = 0.0
 
     def start(self):
@@ -431,9 +446,13 @@ class TokenManager(object):
             LOG.info("Validating the new bearer token against %s", self.cfg.usage_path)
             self.client.fetch_usage(candidate)
         except Exception as exc:
+            now_epoch = time.time()
             now_mono = time.monotonic()
             with self._state_lock:
                 self._last_error = str(exc)
+                if self._last_error_started_epoch is None:
+                    self._last_error_started_epoch = now_epoch
+                self._consecutive_refresh_failures += 1
                 self._next_attempt_monotonic = now_mono + self.cfg.refresh_retry_seconds
             raise
 
@@ -445,6 +464,8 @@ class TokenManager(object):
             self._next_refresh_monotonic = now_mono + self.cfg.refresh_interval_seconds
             self._next_attempt_monotonic = self._next_refresh_monotonic
             self._last_error = None
+            self._last_error_started_epoch = None
+            self._consecutive_refresh_failures = 0
         LOG.info(
             "New StorageGRID token validated and installed in memory; next regular refresh in %.2f hours",
             self.cfg.refresh_interval_seconds / 3600.0,
@@ -489,10 +510,13 @@ class TokenManager(object):
             return max(0.0, self._next_refresh_monotonic - time.monotonic())
 
     def snapshot(self):
+        now_epoch = time.time()
         with self._state_lock:
             last_success = self._last_success_epoch
             token_loaded = self._token is not None
             last_error = self._last_error
+            last_error_started = self._last_error_started_epoch
+            consecutive_failures = self._consecutive_refresh_failures
             next_seconds = (
                 max(0.0, self._next_refresh_monotonic - time.monotonic())
                 if token_loaded
@@ -507,6 +531,17 @@ class TokenManager(object):
             ),
             "seconds_until_refresh": int(next_seconds),
             "last_refresh_error": last_error is not None,
+            "refresh_error_age_seconds": (
+                int(max(0.0, now_epoch - last_error_started))
+                if last_error_started is not None
+                else None
+            ),
+            "seconds_since_last_success": (
+                int(max(0.0, now_epoch - last_success))
+                if last_success is not None
+                else None
+            ),
+            "consecutive_refresh_failures": consecutive_failures,
         }
 
     def _refresh_loop(self):
@@ -633,9 +668,29 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         if path == "/readyz":
             snapshot = self.app.manager.snapshot()
-            status = 200 if snapshot["token_loaded"] else 503
+            stale = (
+                snapshot["refresh_error_age_seconds"] is not None
+                and snapshot["refresh_error_age_seconds"]
+                >= self.app.cfg.stale_token_warning_seconds
+            )
+            status = 200 if snapshot["token_loaded"] and not stale else 503
             snapshot["status"] = "ready" if status == 200 else "not_ready"
             self._send_json(status, snapshot)
+            return
+
+        if path == "/metrics":
+            snapshot = self.app.manager.snapshot()
+            self._send_json(
+                200,
+                {
+                    "token_loaded": snapshot["token_loaded"],
+                    "seconds_since_last_success": snapshot["seconds_since_last_success"],
+                    "consecutive_refresh_failures": snapshot[
+                        "consecutive_refresh_failures"
+                    ],
+                    "last_refresh_error": snapshot["last_refresh_error"],
+                },
+            )
             return
 
         if path != "/storagegrid/usage":
