@@ -234,6 +234,38 @@ Native log:
 logs/storagegrid-usage-proxy.log
 ```
 
+### Native log rotation
+
+`scripts/start.sh` appends to the native log and intentionally leaves application logging
+unchanged. Install the included `copytruncate` logrotate template so the running proxy can keep
+its file descriptor open while old logs are rotated.
+
+For a system-wide installation (replace the project path only through this command):
+
+```bash
+sudo sed "s|__PROJECT_DIR__|$(pwd)|g" scripts/logrotate/storagegrid-usage-proxy \
+  | sudo tee /etc/logrotate.d/storagegrid-usage-proxy >/dev/null
+sudo logrotate -d /etc/logrotate.d/storagegrid-usage-proxy
+```
+
+Run those commands from the project directory. The installed policy rotates the log daily, keeps
+14 archives, and compresses old archives after one rotation.
+
+Without root access, install a per-user policy and invoke logrotate from the current user's cron:
+
+```bash
+mkdir -p "$HOME/.config/logrotate" "$HOME/.local/state"
+sed "s|__PROJECT_DIR__|$(pwd)|g" scripts/logrotate/storagegrid-usage-proxy \
+  > "$HOME/.config/logrotate/storagegrid-usage-proxy"
+crontab -e
+```
+
+Add this daily crontab entry, adjusting the `logrotate` path if needed:
+
+```cron
+0 0 * * * /usr/sbin/logrotate -s "$HOME/.local/state/storagegrid-usage-proxy.logrotate.status" "$HOME/.config/logrotate/storagegrid-usage-proxy"
+```
+
 ## 6A. Native reboot autostart
 
 After native deployment works:

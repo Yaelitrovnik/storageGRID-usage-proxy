@@ -296,7 +296,9 @@ storageGRID-usage-proxy/
 │   ├── status.sh
 │   ├── stop.sh
 │   ├── install-autostart.sh
-│   └── remove-autostart.sh
+│   ├── remove-autostart.sh
+│   └── logrotate/
+│       └── storagegrid-usage-proxy # native logrotate template (copytruncate)
 ├── tests/
 │   ├── test_storagegrid_usage_proxy.py
 │   └── test_end_to_end.py
