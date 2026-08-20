@@ -36,6 +36,7 @@ def base_config(tmp: pathlib.Path) -> mod.Config:
         bind_host="127.0.0.1",
         bind_port=8787,
         proxy_api_key=None,
+        allow_unauthenticated_nonloopback=False,
         log_level="INFO",
     )
 
@@ -363,6 +364,27 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(mod.is_loopback_bind("localhost"))
         self.assertFalse(mod.is_loopback_bind("0.0.0.0"))
         self.assertFalse(mod.is_loopback_bind("10.0.0.10"))
+
+    def test_loopback_without_proxy_key_is_allowed(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = base_config(pathlib.Path(td))
+            mod.validate_bind_security(cfg)
+
+    def test_non_loopback_without_proxy_key_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = base_config(pathlib.Path(td))
+            cfg.bind_host = "0.0.0.0"
+            with self.assertRaisesRegex(mod.ProxyError, "PROXY_API_KEY is required"):
+                mod.validate_bind_security(cfg)
+
+    def test_non_loopback_without_proxy_key_allows_explicit_override_loudly(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = base_config(pathlib.Path(td))
+            cfg.bind_host = "0.0.0.0"
+            cfg.allow_unauthenticated_nonloopback = True
+            with self.assertLogs(mod.LOG, level="WARNING") as logged:
+                mod.validate_bind_security(cfg)
+            self.assertIn("DANGEROUS OVERRIDE", "\n".join(logged.output))
 
 
 class ClientTests(unittest.TestCase):

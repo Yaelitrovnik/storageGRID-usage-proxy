@@ -79,8 +79,15 @@ CA_BUNDLE=
 PROXY_BIND_HOST=0.0.0.0
 PROXY_PORT=8787
 PROXY_API_KEY=
+ALLOW_UNAUTHENTICATED_NONLOOPBACK=false
 LOG_LEVEL=INFO
 ```
+
+`PROXY_API_KEY` is required when `PROXY_BIND_HOST` is non-loopback, including `0.0.0.0`.
+Set the same value in HTTP-SNIFFER's `X-StorageGRID-Proxy-Key` header. A non-loopback
+listener without a key fails at startup unless the operator deliberately sets
+`ALLOW_UNAUTHENTICATED_NONLOOPBACK=true`; that override is logged as dangerous and should
+only be used for an explicitly accepted insecure deployment.
 
 The authorize body contains `cookie: true` and `csrfToken: false` directly in application code. There is no bootstrap bearer or bootstrap CSRF configuration.
 

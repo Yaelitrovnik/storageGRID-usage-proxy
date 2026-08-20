@@ -69,6 +69,7 @@ class Config(object):
         bind_host,
         bind_port,
         proxy_api_key,
+        allow_unauthenticated_nonloopback,
         log_level,
     ):
         self.base_url = base_url
@@ -86,6 +87,7 @@ class Config(object):
         self.bind_host = bind_host
         self.bind_port = bind_port
         self.proxy_api_key = proxy_api_key
+        self.allow_unauthenticated_nonloopback = allow_unauthenticated_nonloopback
         self.log_level = log_level
 
     @classmethod
@@ -136,6 +138,9 @@ class Config(object):
             bind_host=os.getenv("PROXY_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1",
             bind_port=port,
             proxy_api_key=proxy_api_key,
+            allow_unauthenticated_nonloopback=env_bool(
+                "ALLOW_UNAUTHENTICATED_NONLOOPBACK", False
+            ),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )
 
@@ -551,6 +556,23 @@ def is_loopback_bind(host):
         return False
 
 
+def validate_bind_security(cfg):
+    """Reject unauthenticated network binds unless explicitly overridden."""
+    if is_loopback_bind(cfg.bind_host) or cfg.proxy_api_key is not None:
+        return
+    if not cfg.allow_unauthenticated_nonloopback:
+        raise ProxyError(
+            "PROXY_API_KEY is required when PROXY_BIND_HOST is non-loopback; "
+            "set ALLOW_UNAUTHENTICATED_NONLOOPBACK=true only for an explicitly "
+            "accepted insecure deployment"
+        )
+    LOG.critical(
+        "DANGEROUS OVERRIDE: proxy is bound to non-loopback host %s without "
+        "PROXY_API_KEY because ALLOW_UNAUTHENTICATED_NONLOOPBACK=true",
+        cfg.bind_host,
+    )
+
+
 class ProxyApplication(object):
     def __init__(self, cfg, client, manager, proxy_api_key):
         self.cfg = cfg
@@ -647,16 +669,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
 
 def run_server(cfg):
+    validate_bind_security(cfg)
     context = build_ssl_context(cfg)
     client = StorageGridClient(cfg, context)
     manager = TokenManager(cfg, client)
-
-    if not is_loopback_bind(cfg.bind_host) and cfg.proxy_api_key is None:
-        LOG.warning(
-            "Proxy is bound to non-loopback host %s without PROXY_API_KEY. "
-            "Restrict access with the host firewall or configure a proxy API key.",
-            cfg.bind_host,
-        )
 
     app = ProxyApplication(cfg, client, manager, cfg.proxy_api_key)
     server = ProxyHTTPServer((cfg.bind_host, cfg.bind_port), app)

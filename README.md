@@ -115,6 +115,12 @@ config/proxy.env
 
 Keep placeholder values in Git. Enter real credentials only in the deployment copy and never commit those values.
 
+`PROXY_API_KEY` is also required when `PROXY_BIND_HOST` is not loopback (for example,
+the packaged `0.0.0.0` default). Configure HTTP-SNIFFER to send that value in the
+`X-StorageGRID-Proxy-Key` header. The only way to start an unauthenticated non-loopback
+listener is the deliberately conspicuous `ALLOW_UNAUTHENTICATED_NONLOOPBACK=true` override;
+the proxy logs this as a dangerous configuration.
+
 Only these four values are environment-specific:
 
 ```ini
