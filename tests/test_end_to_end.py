@@ -165,6 +165,7 @@ class EndToEndTests(unittest.TestCase):
                     bind_host="127.0.0.1",
                     bind_port=0,
                     proxy_api_key=None,
+                    allow_unauthenticated_nonloopback=False,
                     log_level="INFO",
                 )
                 client = mod.StorageGridClient(cfg, ssl.create_default_context())

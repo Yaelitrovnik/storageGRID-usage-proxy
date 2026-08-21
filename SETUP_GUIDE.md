@@ -72,6 +72,7 @@ AUTH_PATH=/api/v4/authorize
 USAGE_PATH=/api/v4/org/usage
 TOKEN_REFRESH_HOURS=10
 REFRESH_RETRY_SECONDS=300
+STALE_TOKEN_WARNING_SECONDS=900
 HTTP_TIMEOUT_SECONDS=30
 MAX_RESPONSE_BYTES=10485760
 TLS_VERIFY=true
@@ -79,8 +80,22 @@ CA_BUNDLE=
 PROXY_BIND_HOST=0.0.0.0
 PROXY_PORT=8787
 PROXY_API_KEY=
+ALLOW_UNAUTHENTICATED_NONLOOPBACK=false
 LOG_LEVEL=INFO
 ```
+
+`PROXY_API_KEY` is required when `PROXY_BIND_HOST` is non-loopback, including `0.0.0.0`.
+Set the same value in HTTP-SNIFFER's `X-StorageGRID-Proxy-Key` header. A non-loopback
+listener without a key fails at startup unless the operator deliberately sets
+`ALLOW_UNAUTHENTICATED_NONLOOPBACK=true`; that override is logged as dangerous and should
+only be used for an explicitly accepted insecure deployment.
+
+`/readyz` returns 503 when no token is loaded or refresh failures have persisted for
+`STALE_TOKEN_WARNING_SECONDS`. The default is 900 seconds (or three retry intervals if longer).
+The endpoint's JSON status includes only non-sensitive refresh failure age/count fields. The
+unauthenticated `GET /metrics` JSON endpoint exposes token presence, seconds since last success,
+consecutive failure count, and a boolean error state; it never includes token, password, or error
+text.
 
 The authorize body contains `cookie: true` and `csrfToken: false` directly in application code. There is no bootstrap bearer or bootstrap CSRF configuration.
 
@@ -217,6 +232,38 @@ Native log:
 
 ```text
 logs/storagegrid-usage-proxy.log
+```
+
+### Native log rotation
+
+`scripts/start.sh` appends to the native log and intentionally leaves application logging
+unchanged. Install the included `copytruncate` logrotate template so the running proxy can keep
+its file descriptor open while old logs are rotated.
+
+For a system-wide installation (replace the project path only through this command):
+
+```bash
+sudo sed "s|__PROJECT_DIR__|$(pwd)|g" scripts/logrotate/storagegrid-usage-proxy \
+  | sudo tee /etc/logrotate.d/storagegrid-usage-proxy >/dev/null
+sudo logrotate -d /etc/logrotate.d/storagegrid-usage-proxy
+```
+
+Run those commands from the project directory. The installed policy rotates the log daily, keeps
+14 archives, and compresses old archives after one rotation.
+
+Without root access, install a per-user policy and invoke logrotate from the current user's cron:
+
+```bash
+mkdir -p "$HOME/.config/logrotate" "$HOME/.local/state"
+sed "s|__PROJECT_DIR__|$(pwd)|g" scripts/logrotate/storagegrid-usage-proxy \
+  > "$HOME/.config/logrotate/storagegrid-usage-proxy"
+crontab -e
+```
+
+Add this daily crontab entry, adjusting the `logrotate` path if needed:
+
+```cron
+0 0 * * * /usr/sbin/logrotate -s "$HOME/.local/state/storagegrid-usage-proxy.logrotate.status" "$HOME/.config/logrotate/storagegrid-usage-proxy"
 ```
 
 ## 6A. Native reboot autostart
@@ -628,5 +675,8 @@ reauthorize immediately
 validate replacement
 retry usage once
 ```
+
+Concurrent HTTP 401 responses for the same active token trigger only one reauthorization;
+the remaining requests reuse the validated replacement token.
 
 No bearer token is written to `conf.json`, `proxy.env`, a database, or another runtime file.
