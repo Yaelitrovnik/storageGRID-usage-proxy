@@ -173,6 +173,27 @@ When the GitLab environment is prepared, use an approved resilience mechanism su
 
 This is a CI infrastructure concern and requires no application-code change.
 
+## GitLab CI validation status
+
+Confirmed locally:
+
+- `.gitlab-ci.yml` parses as YAML and defines the expected test and packaging stages.
+- The Docker-in-Docker job explicitly sets `DOCKER_HOST=tcp://docker:2375`, disables
+  `DOCKER_TLS_CERTDIR`, gives the service the `docker` alias, validates `TAG`, and
+  builds/saves both the versioned and `latest` image tags.
+- GitLab job, service, and Docker build-base image references use
+  `CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX`, so a configured GitLab Dependency Proxy
+  protects the pulls that happen before the job script as well as the retried base-image pull.
+
+Still requires a live GitLab pipeline:
+
+- Confirm the selected GitLab Runner uses the Docker executor with `privileged = true` for
+  Docker-in-Docker; this is runner configuration and cannot be granted by `.gitlab-ci.yml`.
+- Confirm the group Dependency Proxy is enabled and accessible to the runner, or replace its
+  image prefix with the approved self-hosted registry/mirror.
+- Run a normal test pipeline and a `TAG`-change/manual packaging pipeline to confirm artifact
+  upload and Docker-in-Docker behavior on that runner.
+
 ## Remaining real-environment verification
 
 The following still require the real target environment:
