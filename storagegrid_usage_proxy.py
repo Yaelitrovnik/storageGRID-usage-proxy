@@ -793,6 +793,10 @@ def main():
         configure_logging(os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO")
         LOG.info("Loaded configuration from %s", env_file)
         cfg = Config.from_env()
+        # Must run before any success/ready state (check-config, test-upstream, or
+        # the real server) is reported, so an unauthenticated non-loopback bind is
+        # never silently accepted through any code path.
+        validate_bind_security(cfg)
         context = build_ssl_context(cfg)
 
         if args.check_config:
