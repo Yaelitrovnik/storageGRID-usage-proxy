@@ -71,11 +71,16 @@ Retained as fallback/troubleshooting.
 ### Docker - recommended production deployment
 
 - Runtime image based on `python:3.11-slim-bookworm`.
-- `config/proxy.env` mounted read-only.
+- `config/proxy.env` mounted read-only; credentials and `PROXY_API_KEY` are not baked
+  into image layers.
 - optional `certs/` mounted read-only.
 - `restart: unless-stopped`.
 - read-only root filesystem and dropped capabilities from `compose.yml`.
 - offline transfer with `docker save` / `docker load`.
+- Docker health uses `/readyz`; an unhealthy state does not by itself trigger
+  `restart: unless-stopped`.
+- Production non-loopback deployments require `PROXY_API_KEY` and HTTP-SNIFFER must send
+  `X-StorageGRID-Proxy-Key`.
 
 ## Release versioning
 
@@ -84,17 +89,17 @@ Retained as fallback/troubleshooting.
 Example:
 
 ```text
-v1.0.0
+v1.1.0
 ```
 
 Both CI systems use it to produce:
 
 ```text
-storagegrid-usage-proxy:v1.0.0
+storagegrid-usage-proxy:v1.1.0
 storagegrid-usage-proxy:latest
-storagegrid-usage-proxy_v1.0.0.tar
-storagegrid-usage-proxy_v1.0.0.tar.sha256
-IMAGE_VERSION.txt
+storagegrid-usage-proxy_v1.1.0.tar
+storagegrid-usage-proxy_v1.1.0.tar.sha256
+IMAGE_VERSION.txt containing v1.1.0
 ```
 
 Normal code commits do not require a `TAG` change.
@@ -109,7 +114,9 @@ Verified application behavior:
 - Python 3.6 grammar compatibility: PASS.
 - POSIX shell syntax: PASS.
 - Placeholder runtime configuration rejection: PASS.
-- Automated suite: **35/35 PASS**.
+- Automated suite: **44/44 PASS**.
+- `--check-config` accepts non-loopback binds only when `PROXY_API_KEY` is configured
+  or the explicit unsafe override is enabled.
 - Authorize body test: PASS.
 - v4-like token extraction from `response.data`: PASS.
 - Candidate validation before activation: PASS.
@@ -124,12 +131,15 @@ Verified application behavior:
 
 GitHub Actions is the current active CI system.
 
-Observed successful compatibility runs:
+Current source compatibility expectation after local container validation:
 
 ```text
-Python 3.6.15: 35/35 PASS
-Python 3.11:   35/35 PASS
+Python 3.6.15: 44/44 PASS
+Python 3.11:   44/44 PASS
 ```
+
+The updated 44-test suite still requires a real GitHub Actions run before it should be
+recorded as GitHub-proven.
 
 A later Python 3.11 Docker-based test attempt encountered Docker Hub `502 Bad Gateway` **before the test container started**. This was an external image-pull failure, not an application test failure.
 

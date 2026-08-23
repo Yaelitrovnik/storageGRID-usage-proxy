@@ -793,11 +793,14 @@ def main():
         configure_logging(os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO")
         LOG.info("Loaded configuration from %s", env_file)
         cfg = Config.from_env()
-        context = build_ssl_context(cfg)
 
         if args.check_config:
+            validate_bind_security(cfg)
+            build_ssl_context(cfg)
             print("configuration_ok=yes")
             return 0
+
+        context = build_ssl_context(cfg)
 
         if args.test_upstream:
             client = StorageGridClient(cfg, context)
