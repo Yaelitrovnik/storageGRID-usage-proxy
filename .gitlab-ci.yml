@@ -1,50 +1,60 @@
+# GitLab CI for both closed-network image-source options.
+#
+# Option B (recommended for a fully air-gapped/self-managed GitLab):
+#   IMAGE_PREFIX=<registry.company.local>
+#
+# Option A (GitLab Dependency Proxy):
+#   Set the GitLab CI/CD variable IMAGE_PREFIX to:
+#   $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX
+#
+# The runner must be able to pull the selected images before the job starts.
+# The Docker-in-Docker package job also requires a runner configuration that
+# permits privileged Docker-in-Docker.
+#
+# Required images in the selected internal source:
+#   python:3.6.15-slim-buster
+#   python:3.11-slim-bookworm
+#   docker:27.5.1-cli
+#   docker:27.5.1-dind
+
 stages:
   - test
   - package
 
-# Route Docker Hub images through GitLab's Dependency Proxy. The proxy must be
-# enabled for the GitLab group; a self-hosted installation may instead point
-# these image references at its approved registry mirror.
 variables:
-  DOCKER_PROXY_PREFIX: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}
+  IMAGE_PREFIX: "<registry.company.local>"
+  IMAGE_NAME: storagegrid-usage-proxy
 
-# Native fallback compatibility: the server currently has Python 3.6.8.
 test:python36:
   stage: test
-  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/python:3.6.15-slim-buster
+  image: "${IMAGE_PREFIX}/python:3.6.15-slim-buster"
   script:
     - python3 -m unittest discover -s tests -v
 
-# Docker production runtime compatibility.
 test:python311:
   stage: test
-  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/python:3.11-slim-bookworm
+  image: "${IMAGE_PREFIX}/python:3.11-slim-bookworm"
   script:
     - python3 -m unittest discover -s tests -v
 
-# Produces an offline-loadable Docker image archive.
-# The GitLab Runner Docker executor must be configured with privileged = true
-# for Docker-in-Docker; that setting cannot be enabled by this project file.
 package:docker-offline:
   stage: package
-  image: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:27.5.1-cli
+  image: "${IMAGE_PREFIX}/docker:27.5.1-cli"
   services:
-    - name: ${CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX}/docker:27.5.1-dind
+    - name: "${IMAGE_PREFIX}/docker:27.5.1-dind"
       alias: docker
       command: ["--tls=false"]
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
-    IMAGE_NAME: storagegrid-usage-proxy
   needs:
     - test:python36
     - test:python311
-
   before_script:
     - docker info
     - |
-      BASE_IMAGE="${DOCKER_PROXY_PREFIX}/python:3.11-slim-bookworm"
+      BASE_IMAGE="${IMAGE_PREFIX}/python:3.11-slim-bookworm"
       for attempt in 1 2 3 4 5; do
         echo "Docker pull attempt $attempt/5"
         if docker pull "$BASE_IMAGE"; then
@@ -56,9 +66,10 @@ package:docker-offline:
         fi
         sleep $((attempt * 15))
       done
-
   script:
     - |
+      set -eu
+
       if [ ! -f TAG ]; then
         echo "ERROR: TAG file does not exist"
         exit 1
@@ -77,9 +88,7 @@ package:docker-offline:
       fi
 
       TAR_FILE="storagegrid-usage-proxy_${VERSION}.tar"
-      BASE_IMAGE="${DOCKER_PROXY_PREFIX}/python:3.11-slim-bookworm"
-
-      echo "Building ${IMAGE_NAME}:${VERSION}"
+      BASE_IMAGE="${IMAGE_PREFIX}/python:3.11-slim-bookworm"
 
       docker build \
         --build-arg BASE_IMAGE="$BASE_IMAGE" \
@@ -87,14 +96,14 @@ package:docker-offline:
         --label org.opencontainers.image.revision="$CI_COMMIT_SHA" \
         --label org.opencontainers.image.source="$CI_PROJECT_URL" \
         -t "${IMAGE_NAME}:${VERSION}" \
-        -t "${IMAGE_NAME}:latest" \
         .
 
-      docker save -o "$TAR_FILE" \
-        "${IMAGE_NAME}:${VERSION}" \
-        "${IMAGE_NAME}:latest"
-
+      docker save -o "$TAR_FILE" "${IMAGE_NAME}:${VERSION}"
       sha256sum "$TAR_FILE" > "${TAR_FILE}.sha256"
+
+      # Compose reads this file automatically. It prevents deployment from
+      # depending on the mutable 'latest' tag.
+      printf 'IMAGE_TAG=%s\n' "$VERSION" > .env
       printf '%s\n' "$VERSION" > IMAGE_VERSION.txt
 
   artifacts:
@@ -104,7 +113,9 @@ package:docker-offline:
       - storagegrid-usage-proxy_*.tar
       - storagegrid-usage-proxy_*.tar.sha256
       - IMAGE_VERSION.txt
+      - .env
       - compose.yml
+      - config/proxy.env
 
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'

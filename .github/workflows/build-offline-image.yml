@@ -178,7 +178,6 @@ jobs:
             --label org.opencontainers.image.revision="$GITHUB_SHA" \
             --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             -t "$IMAGE_NAME:$VERSION" \
-            -t "$IMAGE_NAME:latest" \
             .
 
       - name: Export offline Docker archive
@@ -187,12 +186,11 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TAR_FILE="${{ steps.version.outputs.tar_file }}"
 
-          docker save -o "$TAR_FILE" \
-            "$IMAGE_NAME:$VERSION" \
-            "$IMAGE_NAME:latest"
+          docker save -o "$TAR_FILE" "$IMAGE_NAME:$VERSION"
 
           sha256sum "$TAR_FILE" > "$TAR_FILE.sha256"
-          ls -lh "$TAR_FILE" "$TAR_FILE.sha256" IMAGE_VERSION.txt
+          printf 'IMAGE_TAG=%s\\n' "$VERSION" > .env
+          ls -lh "$TAR_FILE" "$TAR_FILE.sha256" IMAGE_VERSION.txt .env
 
       - name: Upload offline image artifact
         uses: actions/upload-artifact@v7
@@ -202,7 +200,9 @@ jobs:
             storagegrid-usage-proxy_*.tar
             storagegrid-usage-proxy_*.tar.sha256
             IMAGE_VERSION.txt
+            .env
             compose.yml
+            config/proxy.env
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
