@@ -1,21 +1,15 @@
-# GitLab CI for both closed-network image-source options.
+# GitLab CI for closed-network deployment using an internal container registry.
 #
-# Option B (recommended for a fully air-gapped/self-managed GitLab):
-#   IMAGE_PREFIX=<registry.company.local>
+# The runner must be able to pull all required images from the internal
+# registry before the job starts.
 #
-# Option A (GitLab Dependency Proxy):
-#   Set the GitLab CI/CD variable IMAGE_PREFIX to:
-#   $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX
-#
-# The runner must be able to pull the selected images before the job starts.
-# The Docker-in-Docker package job also requires a runner configuration that
-# permits privileged Docker-in-Docker.
-#
-# Required images in the selected internal source:
+# Required images in the internal registry:
 #   python:3.6.15-slim-buster
 #   python:3.11-slim-bookworm
 #   docker:27.5.1-cli
 #   docker:27.5.1-dind
+#
+# Replace <registry.company.local> with the actual internal registry address.
 
 stages:
   - test
