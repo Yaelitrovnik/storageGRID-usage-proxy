@@ -218,6 +218,7 @@ These checks require the real closed-network environment and must not be claimed
 
 A release is ready for production when:
 
+<<<<<<< HEAD
 - source/CI validation is green;
 - Docker release artifacts are generated and checksum-verified;
 - the production Compose/env/certificate layout is correct;
@@ -226,3 +227,141 @@ A release is ready for production when:
 - HTTP-SNIFFER can authenticate to and reach the proxy;
 - real StorageGRID authorization and usage retrieval succeed;
 - Splunk receives the expected output.
+=======
+Tests:
+
+```text
+Python 3.6.15
+Python 3.11
+```
+
+Packaging:
+
+```text
+TAG changes on default branch
+OR
+manual web pipeline
+```
+
+Both tests must pass before packaging.
+
+The package job:
+
+1. reads and validates `TAG`;
+2. pulls the internal Python 3.11 base image;
+3. builds the exact versioned application image;
+4. saves that versioned image to a TAR;
+5. creates SHA256, `.env`, and `IMAGE_VERSION.txt`;
+6. publishes the deployment artifacts.
+
+No `latest` tag is required.
+
+## 8. GitHub Actions
+
+GitHub remains supported.
+
+The workflow continues to test Python 3.6.15 and Python 3.11 and builds the same versioned
+Docker artifact model. It no longer exports `latest` as part of the offline production artifact.
+
+## 9. Runtime API
+
+Operator / HTTP-SNIFFER endpoint:
+
+```text
+GET http://<server>:8787/storagegrid/usage
+```
+
+StorageGRID endpoint used internally:
+
+```text
+GET /api/v4/org/usage
+```
+
+Authorization:
+
+```text
+POST /api/v4/authorize
+```
+
+The proxy does not require an application-level API key for the local network endpoint. The
+approved closed network and host/network controls are the access boundary.
+
+## 10. TLS
+
+Normal production setting:
+
+```ini
+TLS_VERIFY=true
+CA_BUNDLE=
+```
+
+If StorageGRID uses an internal CA that is not trusted by the Python runtime, provide the
+approved CA PEM under `certs/` and configure `CA_BUNDLE` accordingly.
+
+`TLS_VERIFY=false` is not the normal production configuration.
+
+## 11. Validation performed on the supplied project
+
+The modified application compiles successfully.
+
+The application/unit test suite currently contains 32 unit tests after removing obsolete
+proxy-API-key and non-loopback authentication tests. All 32 unit tests pass in this environment.
+Two of the three end-to-end tests also pass. The remaining CLI subprocess test is blocked by
+the execution environment's Python subprocess startup behavior described below.
+
+The tests cover, among other things:
+
+- 10-hour token refresh;
+- refresh retry/backoff;
+- validation before token activation;
+- HTTP 401 reauthorization/retry;
+- failed 401 recovery backoff;
+- token extraction;
+- StorageGRID request construction;
+- response preservation;
+- placeholder configuration validation;
+- health/readiness behavior;
+- direct `/storagegrid/usage` access.
+
+The remaining end-to-end CLI subprocess test could not be completed in this execution
+environment because the child Python process does not complete startup here. The test process
+times out before the proxy's CLI test can finish. The same environment also emits an external
+artifact-tool startup timeout during Python startup. This is an execution-environment limitation,
+not a reported StorageGRID application failure.
+
+Docker Engine is not available in this execution environment, so `docker compose config`,
+`docker build`, `docker save`, and `docker load` cannot be executed here.
+
+Therefore the following remain real-environment acceptance tests rather than claims of local proof:
+
+1. Build with the actual internal registry.
+2. Run the GitLab pipeline on the actual GitLab Runner.
+3. Verify the Runner's Docker-in-Docker capability.
+4. Load the resulting TAR on the closed production server.
+5. Run `docker compose up -d`.
+6. Verify `/healthz`, `/readyz`, and `/storagegrid/usage`.
+7. Verify HTTP-SNIFFER reaches `http://<server>:8787/storagegrid/usage`.
+8. Verify the proxy reaches StorageGRID `/api/v4/org/usage`.
+9. Verify the 10-hour refresh in the real environment.
+
+## 12. Final engineering decision
+
+The project should remain intentionally small:
+
+```text
+HTTP-SNIFFER
+      |
+      v
+StorageGRID Usage Proxy
+      |
+      v
+StorageGRID Tenant API
+```
+
+No token-persistence mechanism, container restart automation, extra service, registry
+deployment layer, Kubernetes layer, or application-level proxy API key is required for
+the stated closed-network design.
+
+The remaining unknowns are infrastructure facts, not reasons to invent application code:
+the actual internal registry hostname/path and the GitLab Runner executor/configuration.
+>>>>>>> 0d113814210693369eac1d9edbe6de15bbef061a
